@@ -51,49 +51,68 @@ def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) 
     Milestone 2: Transformer model + continuous urgency score
     Called asynchronously (BackgroundTasks or RQ worker)
     """
-    global use_fallback
+    # global use_fallback
 
-    start_time = time.time()
+    # start_time = time.time()
 
-    try:
-        if use_fallback:
-            category = baseline_classify(description)
-            urgency = float(baseline_urgency(description))  # 0 or 1
-        else:
-            category = transformer_classify(description)
-            urgency = transformer_urgency(description)      # [0,1]
+    # try:
+    #     if use_fallback:
+    #         category = baseline_classify(description)
+    #         urgency = float(baseline_urgency(description))  # 0 or 1
+    #     else:
+    #         category = transformer_classify(description)
+    #         urgency = transformer_urgency(description)      # [0,1]
 
-        latency = time.time() - start_time
+    #     latency = time.time() - start_time
 
-        if latency > model_latency_threshold:
-            use_fallback = True
+    #     if latency > model_latency_threshold:
+    #         use_fallback = True
 
-        ticket = SupportTicket(
-            ticket_id=ticket_id,
-            subject=subject,
-            description=description,
-            category=category,
-            urgency_score=urgency,
-            processing_status="routed"
-        )
+    #     ticket = SupportTicket(
+    #         ticket_id=ticket_id,
+    #         subject=subject,
+    #         description=description,
+    #         category=category,
+    #         urgency_score=urgency,
+    #         processing_status="routed"
+    #     )
 
-        add_to_priority_queue(ticket)
+    #     add_to_priority_queue(ticket)
 
-        if urgency > 0.8:
-            # Mock webhook – replace with real Slack/Discord URL in production
-            webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # ← change this
-            payload = {
-                "text": f"🚨 High urgency ticket {ticket_id} (score {urgency:.3f})\n"
-                        f"Category: {category}\n"
-                        f"Description: {description[:200]}..."
-            }
-            try:
-                requests.post(webhook_url, json=payload, timeout=5)
-            except Exception as e:
-                print(f"Webhook failed: {e}")
+    #     if urgency > 0.8:
+    #         # Mock webhook – replace with real Slack/Discord URL in production
+    #         webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # ← change this
+    #         payload = {
+    #             "text": f" High urgency ticket {ticket_id} (score {urgency:.3f})\n"
+    #                     f"Category: {category}\n"
+    #                     f"Description: {description[:200]}..."
+    #         }
+    #         try:
+    #             requests.post(webhook_url, json=payload, timeout=5)
+    #         except Exception as e:
+    #             print(f"Webhook failed: {e}")
 
-    except Exception as e:
-        print(f"Error in m2 processing for {ticket_id}: {e}")
+    # except Exception as e:
+    #     print(f"Error in m2 processing for {ticket_id}: {e}")
+    cat = transformer_classify(description)
+    urg = transformer_urgency(description)  # returns value in [0,1]
+
+    ticket = SupportTicket(
+        ticket_id=ticket_id,
+        subject=subject,
+        description=description,
+        category=cat,
+        urgency_score=urg,
+        processing_status="routed"
+    )
+
+    add_to_priority_queue(ticket)
+
+    return {
+        "status": "added",
+        "category": cat,
+        "urgency": urg   # continuous score [0,1]
+    }
 
 
 # ────────────────────────────────────────────────

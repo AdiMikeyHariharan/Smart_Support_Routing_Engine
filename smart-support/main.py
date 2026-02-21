@@ -27,21 +27,22 @@ def add_ticket_m2(ticket: InputTicket):
     with counter_lock:
         ticket_counter += 1
         ticket_id = f"TKT-{ticket_counter:06d}"
+    return process_ticket_m2(ticket_id, ticket.subject, ticket.description)
 
-    # Enqueue to real Redis queue – returns immediately
-    job = ticket_queue.enqueue(
-        process_ticket_m2,
-        ticket_id,
-        ticket.subject,
-        ticket.description
-    )
+    # # Enqueue to real Redis queue – returns immediately
+    # job = ticket_queue.enqueue(
+    #     process_ticket_m2,
+    #     ticket_id,
+    #     ticket.subject,
+    #     ticket.description
+    # )
 
-    return {
-        "status": "enqueued",
-        "ticket_id": ticket_id,
-        "job_id": job.id,
-        "message": "Ticket accepted for background intelligent processing (Milestone 2)"
-    }
+    # return {
+    #     "status": "enqueued",
+    #     "ticket_id": ticket_id,
+    #     "job_id": job.id,
+    #     "message": "Ticket accepted for background intelligent processing (Milestone 2)"
+    # }
 
 # For Milestone 3 (full)
 @app.post("/ticket", status_code=202)
