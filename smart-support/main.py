@@ -6,7 +6,7 @@ from threading import Lock
 from rq.job import Job
 from redis import Redis
 import os
-
+import subprocess
 
 from .models import InputTicket
 from .queue.worker import (
@@ -21,6 +21,8 @@ from .queue import worker  # for circuit reset
 app = FastAPI(title="Smart Support Routing Engine")
 
 redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+
+
 
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str):
