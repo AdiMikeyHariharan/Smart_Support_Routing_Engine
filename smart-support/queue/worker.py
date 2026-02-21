@@ -42,83 +42,121 @@ def process_ticket_m1(ticket_id: str, subject: Optional[str], description: str):
     return {"status": "added", "category": cat, "urgency": urg}
 
 
-def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str):
-    global use_fallback
-    start_time = time.time()
-    
-    if use_fallback:
-        cat = baseline_classify(description)
-        urg = baseline_urgency(description)
-    else:
-        cat = transformer_classify(description)
-        urg = transformer_urgency(description)
-    
-    latency = time.time() - start_time
-    
-    if latency > model_latency_threshold:
-        use_fallback = True
-    
-    ticket = SupportTicket(
-        ticket_id=ticket_id,
-        subject=subject,
-        description=description,
-        category=cat,
-        urgency_score=urg,
-        processing_status="routed"
-    )
-    add_to_priority_queue(ticket)
-    
-    if urg > 0.8:
-        requests.post("https://mock-webhook.example.com", json={
-            "message": f"High urgency ticket: {description}"
-        })
+# ────────────────────────────────────────────────
+# Milestone 2 – Transformer + continuous urgency
+# ────────────────────────────────────────────────
 
-
-def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str):
+def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) -> None:
+    """
+    Milestone 2: Transformer model + continuous urgency score
+    Called asynchronously (BackgroundTasks or RQ worker)
+    """
     global use_fallback
-    timestamp = datetime.now()
-    embedding = get_embedding(description)
-    
-    if check_for_storm(embedding, timestamp):
-        print(f"Ticket {ticket_id} suppressed due to storm")
-        return
-    
-    add_to_recent(timestamp, embedding, ticket_id)
-    
+
     start_time = time.time()
-    
+
     try:
         if use_fallback:
-            cat = baseline_classify(description)
-            urg = baseline_urgency(description)
+            category = baseline_classify(description)
+            urgency = float(baseline_urgency(description))  # 0 or 1
         else:
-            cat = transformer_classify(description)
-            urg = transformer_urgency(description)
-        
+            category = transformer_classify(description)
+            urgency = transformer_urgency(description)      # [0,1]
+
         latency = time.time() - start_time
-        
+
         if latency > model_latency_threshold:
             use_fallback = True
-        
-        agent_id = route_to_agent(cat, urg)
-        if agent_id == -1:
-            raise HTTPException(status_code=503, detail="No available agents")
-        
+
         ticket = SupportTicket(
             ticket_id=ticket_id,
             subject=subject,
             description=description,
-            category=cat,
-            urgency_score=urg,
+            category=category,
+            urgency_score=urgency,
+            processing_status="routed"
+        )
+
+        add_to_priority_queue(ticket)
+
+        if urgency > 0.8:
+            # Mock webhook – replace with real Slack/Discord URL in production
+            webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # ← change this
+            payload = {
+                "text": f"🚨 High urgency ticket {ticket_id} (score {urgency:.3f})\n"
+                        f"Category: {category}\n"
+                        f"Description: {description[:200]}..."
+            }
+            try:
+                requests.post(webhook_url, json=payload, timeout=5)
+            except Exception as e:
+                print(f"Webhook failed: {e}")
+
+    except Exception as e:
+        print(f"Error in m2 processing for {ticket_id}: {e}")
+
+
+# ────────────────────────────────────────────────
+# Milestone 3 – full autonomous processing
+# ────────────────────────────────────────────────
+
+def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) -> None:
+    """
+    Milestone 3: Deduplication + circuit breaker + skill-based agent routing
+    """
+    global use_fallback
+
+    timestamp = datetime.now()
+    embedding = get_embedding(description)
+
+    # Storm / deduplication check
+    if check_for_storm(embedding, timestamp):
+        print(f"Ticket {ticket_id} suppressed – part of storm incident")
+        return
+
+    add_to_recent(timestamp, embedding, ticket_id)
+
+    start_time = time.time()
+
+    try:
+        if use_fallback:
+            category = baseline_classify(description)
+            urgency = float(baseline_urgency(description))
+        else:
+            category = transformer_classify(description)
+            urgency = transformer_urgency(description)
+
+        latency = time.time() - start_time
+
+        if latency > model_latency_threshold:
+            use_fallback = True
+
+        agent_id = route_to_agent(category, urgency)
+        if agent_id == -1:
+            raise HTTPException(status_code=503, detail="No available agents")
+
+        ticket = SupportTicket(
+            ticket_id=ticket_id,
+            subject=subject,
+            description=description,
+            category=category,
+            urgency_score=urgency,
             embedding_vector=embedding.tolist(),
             processing_status="routed"
         )
+
         add_to_priority_queue(ticket)
-        
-        if urg > 0.8:
-            requests.post("https://mock-webhook.example.com", json={
-                "message": f"High urgency ticket assigned to agent {agent_id}: {description}"
-            })
-    
+
+        if urgency > 0.8:
+            webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # ← change
+            payload = {
+                "text": f"🚨 Critical ticket {ticket_id} assigned to agent {agent_id} "
+                        f"(urgency {urgency:.3f})\n{description[:200]}..."
+            }
+            try:
+                requests.post(webhook_url, json=payload, timeout=5)
+            except Exception as e:
+                print(f"Webhook failed: {e}")
+
     except Exception as e:
-        print(f"Error processing ticket {ticket_id}: {e}")
+        print(f"Error in m3 processing for {ticket_id}: {e}")

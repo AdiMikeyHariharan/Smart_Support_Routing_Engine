@@ -33,4 +33,10 @@ def queue_size() -> int:
 def view_queue() -> list:
     """For debugging / monitoring — returns copy"""
     with _queue_lock:
-        return list(_priority_queue)
+        # Create a copy and sort it for display (highest urgency first)
+        items = []
+        temp_heap = _priority_queue[:]  # shallow copy
+        while temp_heap:
+            neg_urg, tid, ticket = heapq.heappop(temp_heap)
+            items.append([neg_urg, tid, ticket])
+        return items

@@ -1,0 +1,20 @@
+{
+  "name": "Smart-Support Routing Engine",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt && sudo apt-get update && sudo apt-get install -y redis && sudo service redis start",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.debugpy"
+      ]
+    }
+  },
+  "forwardPorts": [8000, 6379, 9181],
+  "portsAttributes": {
+    "8000": { "label": "FastAPI", "onAutoForward": "openBrowser" },
+    "6379": { "label": "Redis" },
+    "9181": { "label": "RQ Dashboard" }
+  }
+}

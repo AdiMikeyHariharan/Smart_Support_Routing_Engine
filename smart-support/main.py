@@ -20,15 +20,28 @@ def add_ticket_m1(ticket: InputTicket):
         ticket_id = f"TKT-{ticket_counter:06d}"
     return process_ticket_m1(ticket_id, ticket.subject, ticket.description)
 
-# For Milestone 2 (async)
+# For Milestone 2 (real async broker)
 @app.post("/ticket_m2", status_code=202)
-def add_ticket_m2(ticket: InputTicket, background_tasks: BackgroundTasks):
+def add_ticket_m2(ticket: InputTicket):
     global ticket_counter
     with counter_lock:
         ticket_counter += 1
         ticket_id = f"TKT-{ticket_counter:06d}"
-    background_tasks.add_task(process_ticket_m2, ticket_id, ticket.subject, ticket.description)
-    return {"status": "accepted"}
+
+    # Enqueue to real Redis queue – returns immediately
+    job = ticket_queue.enqueue(
+        process_ticket_m2,
+        ticket_id,
+        ticket.subject,
+        ticket.description
+    )
+
+    return {
+        "status": "enqueued",
+        "ticket_id": ticket_id,
+        "job_id": job.id,
+        "message": "Ticket accepted for background intelligent processing (Milestone 2)"
+    }
 
 # For Milestone 3 (full)
 @app.post("/ticket", status_code=202)
