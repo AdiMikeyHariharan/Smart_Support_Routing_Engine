@@ -4,7 +4,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from threading import Lock
 from .models import InputTicket
 from .queue.worker import process_ticket_m1, process_ticket_m2, process_ticket_m3
-from .queue.queue import view_queue
+from .queue.queue import view_queue,ticket_queue
 
 app = FastAPI()
 
