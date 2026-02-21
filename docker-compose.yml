@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    container_name: smart-support-api
+    command: uvicorn smart-support.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    env_file:
+      - .env
+
+  worker:
+    build: .
+    container_name: smart-support-worker
+    command: rq worker tickets --url redis://redis:6379
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    env_file:
+      - .env
