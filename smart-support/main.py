@@ -1,5 +1,7 @@
 # smart-support/main.py
 
+import asyncio
+
 import uvicorn
 from fastapi import FastAPI
 from threading import Lock
@@ -9,11 +11,7 @@ import os
 
 
 from .models import InputTicket
-from .queue.worker import (
-    process_ticket_m1,
-    process_ticket_m2,
-    process_ticket_m3,
-)
+from .queue.worker import process_ticket_m1, process_ticket_m2, process_ticket_m3
 from .queue.queue import view_queue, ticket_queue
 from .queue import worker  # for circuit reset
 
@@ -39,10 +37,8 @@ counter_lock = Lock()
 
 
 def generate_ticket_id():
-    global ticket_counter
-    with counter_lock:
-        ticket_counter += 1
-        return f"TKT-{ticket_counter:06d}"
+    counter = redis_conn.incr("ticket_counter")  # Atomic increment, starts at 1 if key doesn't exist
+    return f"TKT-{counter:06d}"
 
 
 # ==========================================================
@@ -60,15 +56,19 @@ def add_ticket_m1(ticket: InputTicket):
 # ==========================================================
 
 @app.post("/ticket_m2", status_code=202)
-def add_ticket_m2(ticket: InputTicket):
+async def add_ticket_m2(ticket: InputTicket):
     ticket_id = generate_ticket_id()
 
-    job = ticket_queue.enqueue(
-        process_ticket_m2,
-        ticket_id,
-        ticket.subject,
-        ticket.description,
-    )
+    async def enqueue_job():
+        return await asyncio.to_thread(
+            ticket_queue.enqueue,
+            process_ticket_m2,
+            ticket_id,
+            ticket.subject,
+            ticket.description,
+        )
+
+    job = await enqueue_job()
 
     return {
         "status": "enqueued",
