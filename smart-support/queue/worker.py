@@ -21,6 +21,8 @@ from ..models import SupportTicket
 # ==========================================================
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
+from ..ml.dedup import get_embedding, check_for_storm, add_to_recent
+
 
 # 🔥 Load transformer pipeline once at worker startup
 _transformer_pipeline = pipeline(

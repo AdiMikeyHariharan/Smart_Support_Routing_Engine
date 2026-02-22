@@ -8,6 +8,7 @@ from redis import Redis
 import asyncio
 import os
 import subprocess
+import json
 
 from .models import InputTicket
 from .queue.worker import (
@@ -17,6 +18,7 @@ from .queue.worker import (
 )
 from .queue.queue import view_queue_2, ticket_queue
 from .queue import worker  # for circuit reset
+from .ml import dedup
 
 
 app = FastAPI(title="Smart Support Routing Engine")
@@ -133,6 +135,16 @@ def reset_fallback():
 @app.get("/queue")
 def get_queue():
     return {"queue": view_queue_2()}
+
+
+@app.get("/master_incidents")
+def get_master_incidents():
+    try:
+        raw = dedup.redis_conn.lrange(dedup.MASTER_KEY, 0, -1)
+        incidents = [json.loads(i) for i in raw]
+    except Exception:
+        incidents = dedup.master_incidents
+    return {"master_incidents": incidents}
 
 
 # ==========================================================
