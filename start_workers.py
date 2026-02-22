@@ -13,14 +13,18 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Path to rq inside virtual environment
 RQ_EXECUTABLE = os.path.join(PROJECT_ROOT, "env", "bin", "rq")
 
-# Detect CPU cores
-NUM_WORKERS = multiprocessing.cpu_count()
+# ----------------------------------------------------------
+# IMPORTANT: Limit workers for ML workloads
+# ----------------------------------------------------------
+CPU_CORES = multiprocessing.cpu_count()
 
-print(f"\nDetected {NUM_WORKERS} CPU cores")
-print("Starting RQ workers...\n")
+# Recommended for transformer inference on CPU
+NUM_WORKERS = min(2, CPU_CORES)  # 🔥 Adjust if needed
+
+print(f"\nDetected {CPU_CORES} CPU cores")
+print(f"Starting {NUM_WORKERS} optimized RQ workers...\n")
 
 # ==========================================================
 # Kill existing workers (avoid duplicates)
@@ -44,19 +48,31 @@ for i in range(1, NUM_WORKERS + 1):
 
     log_file = open(log_file_path, "a", buffering=1)
 
-    process = subprocess.Popen(
-        [
+    # Only FIRST worker gets scheduler
+    if i == 1:
+        args = [
             RQ_EXECUTABLE,
             "worker",
             "--with-scheduler",
             "--name",
             worker_name,
             "default",
-        ],
+        ]
+    else:
+        args = [
+            RQ_EXECUTABLE,
+            "worker",
+            "--name",
+            worker_name,
+            "default",
+        ]
+
+    process = subprocess.Popen(
+        args,
         env={**os.environ, "PYTHONPATH": PROJECT_ROOT},
         stdout=log_file,
         stderr=subprocess.STDOUT,
-        start_new_session=True,  # 🔥 critical for detach
+        start_new_session=True,  # Detached
     )
 
     worker_processes.append(process)
@@ -64,13 +80,20 @@ for i in range(1, NUM_WORKERS + 1):
 print("\nAll workers started successfully.\n")
 
 # ==========================================================
-# Optional: Keep script alive (recommended for dev)
+# Graceful Shutdown
 # ==========================================================
+
+def shutdown():
+    print("\nShutting down workers gracefully...")
+    for process in worker_processes:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except Exception:
+            pass
+    sys.exit(0)
 
 try:
     while True:
         time.sleep(10)
 except KeyboardInterrupt:
-    print("\nShutting down workers...")
-    os.system("pkill -f 'rq worker'")
-    sys.exit(0)
+    shutdown()
