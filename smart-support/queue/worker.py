@@ -104,8 +104,6 @@ class CircuitBreaker:
 
 circuit_breaker = CircuitBreaker(latency_threshold=0.5, cooldown=30)
 
-SIMULATE_SLOW_MODEL = False  # set True only for testing
-
 # ==========================================================
 # CLASSIFICATION (WITH CIRCUIT PROTECTION)
 # ==========================================================
@@ -188,7 +186,7 @@ def process_ticket_m1(ticket_id: str, subject: Optional[str], description: str):
 # ==========================================================
 # Milestone 2 – Transformer + continuous urgency + webhook
 # ==========================================================
-def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) -> None:
+def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) -> dict:
     _log(f"[M2] Processing {ticket_id}")
 
     global use_fallback  # needed because we assign to it
@@ -235,11 +233,14 @@ def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) 
 
     except Exception as e:
         _log(f"[M2 ERROR] {ticket_id}: {e}")
+        return {"status": "error", "ticket_id": ticket_id, "error": str(e)}
+
+    return {"status": "processed", "ticket_id": ticket_id, "category": category}
 
 # ==========================================================
 # Milestone 3 – full autonomous processing
 # ==========================================================
-def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) -> None:
+def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) -> dict:
     _log(f"[M3] Processing {ticket_id}")
 
     global use_fallback  # ← FIXED: now declared here so it can be read & written
@@ -249,7 +250,7 @@ def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) 
 
     if check_for_storm(embedding, timestamp):
         _log(f"Ticket {ticket_id} suppressed due to storm")
-        return
+        return {"status": "suppressed", "ticket_id": ticket_id, "reason": "storm detected"} 
 
     add_to_recent(timestamp, embedding, ticket_id)
 
@@ -304,3 +305,5 @@ def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) 
     except Exception as e:
         _log(f"[M3 ERROR] {ticket_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal processing error")
+
+    return {"status": "processed", "ticket_id": ticket_id, "category": category}
