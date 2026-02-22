@@ -42,9 +42,6 @@ def transformer_urgency(text: str):
     result = _transformer_pipeline(text)[0]
     return float(result["score"])
 
-def get_embedding(text: str):
-    return _embedding_model.encode(text)
-
 # ==========================================================
 # Circuit Breaker
 # ==========================================================

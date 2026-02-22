@@ -16,7 +16,6 @@ STORM_WINDOW_MINUTES = 5
 STORM_TICKET_COUNT = 10
 
 # Shared state (could be moved to a class or external store like Redis)
-recent_tickets = []  # List of (timestamp, embedding, ticket_id)
 
 # Redis keys
 _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -106,7 +105,6 @@ def check_for_storm(embedding: np.ndarray, timestamp: datetime, ticket_id: str =
             lock.release()
         except Exception:
             pass
-
 
 def add_to_recent(timestamp: datetime, embedding: np.ndarray, ticket_id: str):
     ts = timestamp.timestamp()
