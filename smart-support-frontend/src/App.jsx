@@ -13,7 +13,7 @@ export default function App() {
     try {
       setLoading(true);
 
-      const response = await axios.post("/api/ticket_m2", {
+      const response = await axios.post("/api/ticket", {
         subject,
         description,
       });
