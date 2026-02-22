@@ -5,13 +5,15 @@ import sys
 from datetime import datetime
 from typing import Optional
 from fastapi import HTTPException
+import asyncio
+import aiohttp
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from ..ml.classifier import baseline_classify, baseline_urgency
 from ..agents import route_to_agent
-from .queue import add_to_priority_queue
+from .queue import add_to_priority_queue, add_to_priority_queue_2
 from ..models import SupportTicket
 
 # ==========================================================
@@ -124,6 +126,21 @@ def _send_webhook(message: str):
     except Exception as e:
         _log(f"Webhook failed: {e}")
 
+# Milestone - 2
+async def _send_webhook_async(message: str):
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    if not webhook_url:
+        _log("Webhook URL not configured.")
+        return
+
+    try:
+        async with aiohttp.ClientSession() as session:  # Use aiohttp for async HTTP (pip install aiohttp)
+            async with session.post(webhook_url, json={"text": message}, timeout=2) as resp:
+                if resp.status == 200:
+                    _log("Webhook sent successfully.")
+    except Exception as e:
+        _log(f"Webhook failed: {e}")
+
 # ==========================================================
 # Milestone 1
 # ==========================================================
@@ -160,7 +177,7 @@ def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str):
             urgency_score=urgency,
             processing_status="routed"
         )
-        add_to_priority_queue(ticket)
+        add_to_priority_queue_2(ticket)
         _log(f"[M2] Ticket {ticket_id} added to priority queue")
 
         if urgency > 0.8:
