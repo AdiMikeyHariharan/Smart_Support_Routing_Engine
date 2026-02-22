@@ -2,34 +2,31 @@
 import requests
 import time
 
-BASE_URL = "http://localhost:8000"
-TICKET_URL = f"{BASE_URL}/ticket"          # M3 endpoint
-QUEUE_URL = f"{BASE_URL}/queue"
+URL = "http://localhost:8000/ticket"
+JOB_URL = "http://localhost:8000/job/{}"
 
-payloads = [
-    {"description": "Hello good morning team"},                     # low urgency
-    {"description": "Good morning"},                                # low
-    {"description": "How do I reset my password please?"},          # medium
-    {"description": "Billing broken urgent fix ASAP!!!"},           # high
-    {"description": "System crashed for everyone right now!!!"},    # high
-] * 3  # repeat to make 15 tickets
+N = 12
+payload = {
+    "subject": "Production outage",
+    "description": "production system completely down — users cannot login"
+}
 
-print("Sending tickets...")
 job_ids = []
-for i, payload in enumerate(payloads, 1):
-    r = requests.post(TICKET_URL, json=payload, timeout=10)
-    if r.status_code == 202:
-        data = r.json()
-        jid = data.get("job_id")
-        job_ids.append(jid)
-        print(f"Sent {i}/{len(payloads)}, job_id={jid}")
-    else:
-        print(f"Failed to send {i}: {r.status_code} {r.text}")
-    time.sleep(0.3)
+for i in range(N):
+    r = requests.post(URL, json=payload, timeout=5)
+    data = r.json()
+    job_ids.append(data.get("job_id"))
+    print(f"Sent {i+1}/{N}, job_id={data.get('job_id')}")
+    time.sleep(0.5)  # pace requests; adjust to fit 5-minute window
 
-print("\nCheck queue:")
-r = requests.get(QUEUE_URL, timeout=5)
-print(r.json())
-
-print("\nWaiting for processing (watch RQ worker logs)...")
-time.sleep(10)  # give worker time to finish
+# Poll results
+for jid in job_ids:
+    if not jid:
+        continue
+    for _ in range(30):
+        r = requests.get(JOB_URL.format(jid), timeout=5)
+        j = r.json()
+        if j.get("status") not in ("queued", "started"):
+            print(f"Job {jid} → result: {j.get('result')}")
+            break
+        time.sleep(1)

@@ -23,7 +23,7 @@ torch.set_num_interop_threads(1)
 # ==========================================================
 # GLOBAL STATE – Circuit Breaker & Fallback Flag
 # ==========================================================
-use_fallback = True
+use_fallback = False
 model_latency_threshold = 0.5  # 500 ms – as per hackathon
 
 # ==========================================================
@@ -104,7 +104,7 @@ class CircuitBreaker:
 
 circuit_breaker = CircuitBreaker(latency_threshold=0.5, cooldown=30)
 
-SIMULATE_SLOW_MODEL = True  # set True only for testing
+SIMULATE_SLOW_MODEL = False  # set True only for testing
 
 # ==========================================================
 # CLASSIFICATION (WITH CIRCUIT PROTECTION)
