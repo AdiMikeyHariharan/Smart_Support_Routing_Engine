@@ -1,12 +1,9 @@
-# ml/classifier.py
+# ml/classifier.py – Fixed & improved (no default distilbert warning)
+
 import re
 import torch
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
-
-# Global pipelines
-classifier_pipeline = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-sentiment_pipeline = pipeline("sentiment-analysis")
 
 # =====================================================
 # Milestone 1 — Baseline ML Component
@@ -28,16 +25,27 @@ def baseline_urgency(text: str) -> float:
 
 # =====================================================
 # Milestone 2 — Transformer ML Component
-# Sentence Transformer based routing + urgency regression
 # =====================================================
 
-# --------------------------------------------------
-# Load embedding model once
-# --------------------------------------------------
+# Load embedding model once (unchanged – good model)
 st_model = SentenceTransformer("all-MiniLM-L6-v2")
 
+# Zero-shot classification pipeline (unchanged – bart-large-mnli is fine)
+classifier_pipeline = pipeline(
+    "zero-shot-classification",
+    model="facebook/bart-large-mnli"
+)
+
+# Modern sentiment model – NO DEFAULT WARNING + realistic scores
+# Trained on Twitter/X data → handles short, urgent, neutral messages well
+_sentiment_pipeline = pipeline(
+    "sentiment-analysis",
+    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    revision="main"  # explicit revision = warning gone forever
+)
+
 # ==================================================
-# CATEGORY CLASSIFICATION
+# CATEGORY CLASSIFICATION (unchanged – semantic similarity)
 # ==================================================
 
 CATEGORY_ANCHORS = {
@@ -83,11 +91,11 @@ def transformer_classify(text: str) -> str:
 
     return max(scores, key=scores.get)
 
-
 # ==================================================
-# URGENCY REGRESSION (SHARPENED)
+# URGENCY REGRESSION – FIXED & SHARPENED
 # ==================================================
 
+# Your original anchors (kept – good idea)
 URGENCY_ANCHORS = [
     ("production system completely down", 1.0),
     ("service outage affecting all users", 1.0),
@@ -107,11 +115,10 @@ anchor_scores = torch.tensor([s for _, s in URGENCY_ANCHORS])
 
 anchor_embeddings = st_model.encode(anchor_texts, convert_to_tensor=True)
 
-
 def transformer_urgency(text: str, temperature: float = 0.05) -> float:
     """
     Continuous urgency score S ∈ [0,1]
-    Uses sharpened semantic similarity
+    Uses sharpened semantic similarity + keyword boost
     """
     text_embedding = st_model.encode(text, convert_to_tensor=True)
 
@@ -124,11 +131,33 @@ def transformer_urgency(text: str, temperature: float = 0.05) -> float:
     max_sim = float(similarities.max())
     if max_sim > 0.85:
         idx = similarities.argmax()
-        return float(anchor_scores[idx])
+        base_score = float(anchor_scores[idx])
+    else:
+        # Temperature scaling → sharper softmax
+        scaled_sim = similarities / temperature
+        weights = torch.softmax(scaled_sim, dim=0)
+        base_score = float((weights * anchor_scores).sum())
 
-    # Temperature scaling → sharper softmax
-    scaled_sim = similarities / temperature
-    weights = torch.softmax(scaled_sim, dim=0)
+    # Keyword boost – tuned for support tickets
+    lower_text = text.lower()
+    boost = 0.0
 
-    score = float((weights * anchor_scores).sum())
-    return round(score, 3)
+    urgent_keywords = [
+        "urgent", "asap", "immediately", "now", "broken", "crashed", "down",
+        "emergency", "critical", "fix", "help", "problem", "issue", "error",
+        "not working", "can't", "failure", "outage", "refund", "cancel"
+    ]
+
+    for kw in urgent_keywords:
+        if kw in lower_text:
+            boost += 0.12
+
+    # Extra boost for strong emotion / shouting
+    if "!!" in text or "!!!" in text or text.isupper():
+        boost += 0.18
+
+    # Final score
+    urgency = min(1.0, base_score + boost)
+    urgency = max(0.0, urgency)
+
+    return round(urgency, 3)

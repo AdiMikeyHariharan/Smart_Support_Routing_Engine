@@ -1,3 +1,5 @@
+# queue/worker.py – Fixed fallback scope + real Slack webhook
+
 import time
 import requests
 import os
@@ -8,38 +10,44 @@ from typing import Optional
 from fastapi import HTTPException
 import asyncio
 import aiohttp
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # ==========================================================
-# 🔥 CPU STABILITY (IMPORTANT FOR MULTI-WORKER)
+# CPU STABILITY (IMPORTANT FOR MULTI-WORKER)
 # ==========================================================
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
 
 # ==========================================================
+# GLOBAL STATE – Circuit Breaker & Fallback Flag
+# ==========================================================
+use_fallback = True
+model_latency_threshold = 0.5  # 500 ms – as per hackathon
+
+# ==========================================================
 # Internal Imports
 # ==========================================================
-from ..ml.classifier import baseline_classify, baseline_urgency
+from ..ml.classifier import baseline_classify, baseline_urgency, transformer_classify, transformer_urgency
 from ..agents import route_to_agent
 from .queue import add_to_priority_queue, add_to_priority_queue_2
 from ..models import SupportTicket
+from ..ml.dedup import get_embedding, check_for_storm, add_to_recent
 
 # ==========================================================
-# 🔥 LOAD MODELS ONCE PER WORKER PROCESS
+# LOAD MODELS ONCE PER WORKER PROCESS
 # ==========================================================
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
-from ..ml.dedup import get_embedding, check_for_storm, add_to_recent
-
 
 print(f"[WORKER INIT | PID {os.getpid()}] Loading ML models...")
 
-_transformer_pipeline = pipeline(
-    "text-classification",
-    model="distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+# Modern model – no default warning (already fixed)
+_sentiment_pipeline = pipeline(
+    "sentiment-analysis",
+    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    revision="main"
 )
 
 _embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -54,7 +62,7 @@ def _log(message: str):
     sys.stdout.flush()
 
 # ==========================================================
-# 🔥 CIRCUIT BREAKER CLASS (REFINED)
+# CIRCUIT BREAKER CLASS (matches hackathon description)
 # ==========================================================
 class CircuitBreaker:
     CLOSED = "CLOSED"
@@ -69,15 +77,12 @@ class CircuitBreaker:
 
     def allow_request(self) -> bool:
         if self.state == self.OPEN:
-            if self.last_failure_time and \
-               (time.time() - self.last_failure_time > self.cooldown):
+            if self.last_failure_time and (time.time() - self.last_failure_time > self.cooldown):
                 self.state = self.HALF_OPEN
-                _log("Circuit → HALF_OPEN (Testing model)")
+                _log("Circuit → HALF_OPEN (testing model)")
                 return True
-
-            _log("Circuit OPEN → Using BASELINE fallback")
+            _log("Circuit OPEN → using BASELINE fallback")
             return False
-
         return True
 
     def record_success(self):
@@ -92,28 +97,20 @@ class CircuitBreaker:
 
     def record_latency(self, latency: float):
         _log(f"Model latency: {latency:.4f}s")
-
         if latency > self.latency_threshold:
             self.record_failure()
         else:
             self.record_success()
 
+circuit_breaker = CircuitBreaker(latency_threshold=0.5, cooldown=30)
 
-# Create breaker instance per worker process
-circuit_breaker = CircuitBreaker(
-    latency_threshold=0.5,   # 500ms
-    cooldown=30              # 30 sec cooldown
-)
-
-# Optional: enable latency simulation for testing
-SIMULATE_SLOW_MODEL = True
+SIMULATE_SLOW_MODEL = True  # set True only for testing
 
 # ==========================================================
-# 🔥 CLASSIFICATION (WITH CIRCUIT PROTECTION)
+# CLASSIFICATION (WITH CIRCUIT PROTECTION)
 # ==========================================================
 def _classify_and_score(description: str):
-
-    # If circuit open → immediate fallback
+    # If circuit open → immediate fallback to Milestone 1
     if not circuit_breaker.allow_request():
         return (
             baseline_classify(description),
@@ -122,27 +119,22 @@ def _classify_and_score(description: str):
 
     try:
         start_time = time.time()
-
-        # Optional slow simulation (FOR TESTING ONLY)
         if SIMULATE_SLOW_MODEL:
             time.sleep(0.7)
 
-        result = _transformer_pipeline(description)[0]
-
-        category = result["label"]
-        urgency = float(result["score"])
+        # Use your real transformer functions from classifier.py
+        category = transformer_classify(description)
+        urgency = transformer_urgency(description)
 
         latency = time.time() - start_time
         circuit_breaker.record_latency(latency)
 
         _log(f"Classification → {category} | Urgency: {urgency:.4f}")
-
         return category, urgency
 
     except Exception as e:
         _log(f"Transformer failure → {e}")
         circuit_breaker.record_failure()
-
         return (
             baseline_classify(description),
             float(baseline_urgency(description))
@@ -157,40 +149,27 @@ def get_embedding(text: str):
 # ==========================================================
 # Webhook
 # ==========================================================
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+
 def _send_webhook(message: str):
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-
-    if not webhook_url:
+    if not SLACK_WEBHOOK_URL:
+        _log("No SLACK_WEBHOOK_URL configured – skipping webhook")
         return
 
     try:
-        requests.post(webhook_url, json={"text": message}, timeout=2)
-        _log("Webhook sent successfully.")
-    except Exception as e:
-        _log(f"Webhook failed: {e}")
-
-# Milestone - 2
-async def _send_webhook_async(message: str):
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook_url:
-        _log("Webhook URL not configured.")
-        return
-
-    try:
-        async with aiohttp.ClientSession() as session:  # Use aiohttp for async HTTP (pip install aiohttp)
-            async with session.post(webhook_url, json={"text": message}, timeout=2) as resp:
-                if resp.status == 200:
-                    _log("Webhook sent successfully.")
+        response = requests.post(SLACK_WEBHOOK_URL, json={"text": message}, timeout=2)
+        if response.status_code == 200:
+            _log("Webhook sent successfully")
+        else:
+            _log(f"Webhook failed – HTTP {response.status_code}")
     except Exception as e:
         _log(f"Webhook failed: {e}")
 
 # ==========================================================
-# Milestone 1
+# Milestone 1 – synchronous baseline
 # ==========================================================
 def process_ticket_m1(ticket_id: str, subject: Optional[str], description: str):
-
     _log(f"[M1] Processing {ticket_id}")
-
     category = baseline_classify(description)
     urgency = baseline_urgency(description)
 
@@ -202,62 +181,94 @@ def process_ticket_m1(ticket_id: str, subject: Optional[str], description: str):
         urgency_score=urgency,
         processing_status="routed",
     )
-
     add_to_priority_queue(ticket)
 
     return {"status": "added", "category": category, "urgency": urgency}
 
 # ==========================================================
-# Milestone 2
+# Milestone 2 – Transformer + continuous urgency + webhook
 # ==========================================================
-def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str):
-
+def process_ticket_m2(ticket_id: str, subject: Optional[str], description: str) -> None:
     _log(f"[M2] Processing {ticket_id}")
 
-    category, urgency = _classify_and_score(description)
+    global use_fallback  # needed because we assign to it
 
-    ticket = SupportTicket(
-        ticket_id=ticket_id,
-        subject=subject,
-        description=description,
-        category=category,
-        urgency_score=urgency,
-        processing_status="routed"
-    )
-
-    add_to_priority_queue(ticket)
-
-    if urgency > 0.8:
-        _send_webhook(
-            f"🚨 High Urgency Ticket {ticket_id}\n"
-            f"Category: {category}\n"
-            f"Urgency: {urgency:.3f}"
-        )
-        add_to_priority_queue_2(ticket)
-        _log(f"[M2] Ticket {ticket_id} added to priority queue")
-
-    _log(f"[M2] COMPLETED → {ticket_id}")
-
-    return {
-        "status": "added",
-        "category": category,
-        "urgency": urgency
-    }
-
-# ==========================================================
-# Milestone 3
-# ==========================================================
-def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str):
-
-    _log(f"[M3] Processing {ticket_id}")
+    start_time = time.time()
 
     try:
-        embedding = get_embedding(description)
+        if use_fallback:
+            category = baseline_classify(description)
+            urgency = float(baseline_urgency(description))
+        else:
+            category, urgency = _classify_and_score(description)
 
-        category, urgency = _classify_and_score(description)
+        latency = time.time() - start_time
+
+        if latency > 0.5:
+            use_fallback = True
+            _log(f"High latency ({latency:.3f}s) → fallback enabled")
+
+        ticket = SupportTicket(
+            ticket_id=ticket_id,
+            subject=subject,
+            description=description,
+            category=category,
+            urgency_score=urgency,
+            processing_status="routed"
+        )
+
+        add_to_priority_queue(ticket)
+
+        if urgency > 0.8:
+            message = (
+                f"🚨 *HIGH URGENCY TICKET* {ticket_id}\n"
+                f"• Category: {category}\n"
+                f"• Urgency Score: {urgency:.3f}\n"
+                f"• Description: {description[:300]}...\n\n"
+                f"*Action needed immediately*"
+            )
+            _send_webhook(message)
+            add_to_priority_queue_2(ticket)
+            _log(f"[M2] High urgency ticket added to priority queue 2")
+
+        _log(f"[M2] COMPLETED → {ticket_id}")
+
+    except Exception as e:
+        _log(f"[M2 ERROR] {ticket_id}: {e}")
+
+# ==========================================================
+# Milestone 3 – full autonomous processing
+# ==========================================================
+def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str) -> None:
+    _log(f"[M3] Processing {ticket_id}")
+
+    global use_fallback  # ← FIXED: now declared here so it can be read & written
+
+    timestamp = datetime.now()
+    embedding = get_embedding(description)
+
+    if check_for_storm(embedding, timestamp):
+        _log(f"Ticket {ticket_id} suppressed due to storm")
+        return
+
+    add_to_recent(timestamp, embedding, ticket_id)
+
+    start_time = time.time()
+
+    try:
+        if use_fallback:
+            category = baseline_classify(description)
+            urgency = float(baseline_urgency(description))
+        else:
+            category, urgency = _classify_and_score(description)
+
+        latency = time.time() - start_time
+
+        if latency > 0.5:
+            use_fallback = True
+            _log(f"High latency ({latency:.3f}s) → fallback enabled")
 
         agent_id = route_to_agent(category, urgency)
-
         if agent_id == -1:
             _log("No available agents")
             raise HTTPException(status_code=503, detail="No available agents")
@@ -276,22 +287,17 @@ def process_ticket_m3(ticket_id: str, subject: Optional[str], description: str):
         add_to_priority_queue(ticket)
 
         if urgency > 0.8:
-            _send_webhook(
-                f"🚨 Critical Ticket {ticket_id}\n"
-                f"Assigned Agent: {agent_id}\n"
-                f"Category: {category}\n"
-                f"Urgency: {urgency:.3f}"
+            message = (
+                f"🚨 *CRITICAL TICKET* {ticket_id}\n"
+                f"• Assigned Agent: {agent_id}\n"
+                f"• Category: {category}\n"
+                f"• Urgency Score: {urgency:.3f}\n"
+                f"• Description: {description[:300]}...\n\n"
+                f"*Immediate action required*"
             )
+            _send_webhook(message)
 
         _log(f"[M3] COMPLETED → {ticket_id}")
-
-        return {
-            "status": "routed",
-            "ticket_id": ticket_id,
-            "category": category,
-            "urgency": urgency,
-            "assigned_agent": agent_id
-        }
 
     except HTTPException:
         raise
