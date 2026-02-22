@@ -2,6 +2,7 @@
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from threading import Lock
 from rq.job import Job
 from redis import Redis
@@ -22,6 +23,18 @@ from .ml import dedup
 
 
 app = FastAPI(title="Smart Support Routing Engine")
+
+origins = [
+    "https://smart-support-routing-engine-dgtd.onrender.com/"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
 
