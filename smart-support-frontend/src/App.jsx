@@ -9,22 +9,18 @@ export default function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     try {
       setLoading(true);
+      
+      const BASE_URL = "https://supreme-space-engine-7v7jjx6j95rfr7r7-8000.app.github.dev";
+      console.log("Backend URL:", BASE_URL);
 
-      const response = await axios.post("/api/ticket", {
-        subject,
-        description,
-      });
-
-      alert(
-        `Ticket submitted!\nTicket ID: ${response.data.ticket_id}`
-      );
+      const response = await axios.post(`${BASE_URL}/ticket`, { subject, description });
+      
+      alert(`Ticket submitted!\nTicket ID: ${response.data.ticket_id}`);
 
       setSubject("");
       setDescription("");
-
     } catch (error) {
       console.error(error);
       alert("Failed to send ticket. Check backend connection.");
@@ -37,9 +33,7 @@ export default function App() {
     <div className="page">
       <div className="card">
         <h1 className="title">Smart Support</h1>
-        <p className="subtitle">
-          Create a support token to address your issues
-        </p>
+        <p className="subtitle">Create a support token to address your issues</p>
 
         <form onSubmit={handleSubmit} className="form">
           <div className="field">

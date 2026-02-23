@@ -25,7 +25,7 @@ from .ml import dedup
 app = FastAPI(title="Smart Support Routing Engine")
 
 origins = [
-    "https://smart-support-routing-engine-dgtd.onrender.com/"
+    "https://smart-support-routing-engine-dgtd.onrender.com",
 ]
 
 app.add_middleware(
