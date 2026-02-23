@@ -24,13 +24,9 @@ from .ml import dedup
 
 app = FastAPI(title="Smart Support Routing Engine")
 
-origins = [
-    "https://smart-support-routing-engine-dgtd.onrender.com",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["https://smart-support-routing-engine-dgtd.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
